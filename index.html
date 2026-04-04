@@ -271,6 +271,22 @@ let staples=load('trl_staples',DEFAULT_STAPLES);
 let history=load('trl_history',[]);
 
 items.forEach(i=>{if(!i.id)i.id=uid();});
+// One-time fixup: re-guess category for any item sitting in 'Other'
+// that was never manually pinned, so old data is corrected automatically.
+(function fixupCategories(){
+  let changed=false;
+  items.forEach(i=>{
+    if(i.cat==='Other'||!i.cat){
+      // Only fix if history doesn't have a user-pinned override
+      const h=history.find(h=>h.name.toLowerCase()===i.name.toLowerCase());
+      if(!(h&&h.pinned)){
+        const guessed=guessCat(i.name);
+        if(guessed!==i.cat){i.cat=guessed;changed=true;}
+      }
+    }
+  });
+  if(changed)save('trl_items',items);
+})();
 
 function uid(){return Math.random().toString(36).slice(2,10);}
 
@@ -278,10 +294,13 @@ let currentView='all', catFilterVal='all', histCatFilter='all';
 let currentTab='list', catModalId=null, catModalSource=null;
 let confirmCallback=null, editingItemId=null, editingHistId=null, dragSrcId=null;
 
-// Resolve category: history memorised cat takes precedence
+// Resolve category: only use history cat if the user manually pinned it.
+// Auto-guessed entries (pinned:false) never override smart guessing so
+// items like eggs/milk always land in Dairy by default.
 function resolveItemCat(name,fallback){
   const h=history.find(h=>h.name.toLowerCase()===name.toLowerCase());
-  return (h&&h.cat)?h.cat:(fallback||guessCat(name));
+  if(h&&h.pinned)return h.cat;
+  return fallback||guessCat(name);
 }
 
 function guessCat(name){
@@ -488,10 +507,17 @@ function openCatModal(id,source){
 function assignCat(cat){
   if(catModalSource==='list'){
     const item=items.find(i=>i.id===catModalId);
-    if(item){item.cat=cat;addToHistory(item.name,cat,false);render();}
+    if(item){
+      item.cat=cat;
+      // Pin the category in history so future re-adds remember this choice
+      const h=history.find(h=>h.name.toLowerCase()===item.name.toLowerCase());
+      if(h){h.cat=cat;h.pinned=true;}else{history.unshift({name:item.name,cat,uses:0,pinned:true});}
+      save('trl_history',history);
+      render();
+    }
   }else{
     const h=history.find(h=>h.name===catModalId);
-    if(h){h.cat=cat;save('trl_history',history);renderHistory();}
+    if(h){h.cat=cat;h.pinned=true;save('trl_history',history);renderHistory();}
   }
   closeCatModal();
 }
